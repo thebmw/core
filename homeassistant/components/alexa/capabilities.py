@@ -4,9 +4,11 @@ from __future__ import annotations
 import logging
 
 from homeassistant.components import (
+    button,
     cover,
     fan,
     image_processing,
+    input_button,
     input_number,
     light,
     timer,
@@ -1905,7 +1907,10 @@ class AlexaEventDetectionSensor(AlexaCapability):
         if self.entity.domain == image_processing.DOMAIN:
             if int(state):
                 human_presence = "DETECTED"
-        elif state == STATE_ON:
+        elif state == STATE_ON or self.entity.domain in [
+            input_button.DOMAIN,
+            button.DOMAIN,
+        ]:
             human_presence = "DETECTED"
 
         return {"value": human_presence}
@@ -1917,7 +1922,8 @@ class AlexaEventDetectionSensor(AlexaCapability):
             "detectionModes": {
                 "humanPresence": {
                     "featureAvailability": "ENABLED",
-                    "supportsNotDetected": True,
+                    "supportsNotDetected": self.entity.domain
+                    not in [input_button.DOMAIN, button.DOMAIN],
                 }
             },
         }

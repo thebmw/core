@@ -180,8 +180,12 @@ async def test_switch(hass, events):
     assert appliance["endpointId"] == "switch#test"
     assert appliance["displayCategories"][0] == "SWITCH"
     assert appliance["friendlyName"] == "Test switch"
-    assert_endpoint_capabilities(
-        appliance, "Alexa.PowerController", "Alexa.EndpointHealth", "Alexa"
+    capabilities = assert_endpoint_capabilities(
+        appliance,
+        "Alexa.PowerController",
+        "Alexa.ContactSensor",
+        "Alexa.EndpointHealth",
+        "Alexa",
     )
 
     await assert_power_controller_works(
@@ -190,6 +194,14 @@ async def test_switch(hass, events):
 
     properties = await reported_properties(hass, "switch#test")
     properties.assert_equal("Alexa.PowerController", "powerState", "ON")
+    properties.assert_equal("Alexa.ContactSensor", "detectionState", "DETECTED")
+    properties.assert_equal("Alexa.EndpointHealth", "connectivity", {"value": "OK"})
+
+    contact_sensor_capability = get_capability(capabilities, "Alexa.ContactSensor")
+    assert contact_sensor_capability is not None
+    properties = contact_sensor_capability["properties"]
+    assert properties["retrievable"] is True
+    assert {"name": "detectionState"} in properties["supported"]
 
 
 async def test_outlet(hass, events):
@@ -205,7 +217,11 @@ async def test_outlet(hass, events):
     assert appliance["displayCategories"][0] == "SMARTPLUG"
     assert appliance["friendlyName"] == "Test switch"
     assert_endpoint_capabilities(
-        appliance, "Alexa", "Alexa.PowerController", "Alexa.EndpointHealth"
+        appliance,
+        "Alexa",
+        "Alexa.PowerController",
+        "Alexa.EndpointHealth",
+        "Alexa.ContactSensor",
     )
 
 
@@ -330,13 +346,28 @@ async def test_input_boolean(hass):
     assert appliance["endpointId"] == "input_boolean#test"
     assert appliance["displayCategories"][0] == "OTHER"
     assert appliance["friendlyName"] == "Test input boolean"
-    assert_endpoint_capabilities(
-        appliance, "Alexa.PowerController", "Alexa.EndpointHealth", "Alexa"
+    capabilities = assert_endpoint_capabilities(
+        appliance,
+        "Alexa.PowerController",
+        "Alexa.ContactSensor",
+        "Alexa.EndpointHealth",
+        "Alexa",
     )
 
     await assert_power_controller_works(
         "input_boolean#test", "input_boolean.turn_on", "input_boolean.turn_off", hass
     )
+
+    properties = await reported_properties(hass, "input_boolean#test")
+    properties.assert_equal("Alexa.PowerController", "powerState", "OFF")
+    properties.assert_equal("Alexa.ContactSensor", "detectionState", "NOT_DETECTED")
+    properties.assert_equal("Alexa.EndpointHealth", "connectivity", {"value": "OK"})
+
+    contact_sensor_capability = get_capability(capabilities, "Alexa.ContactSensor")
+    assert contact_sensor_capability is not None
+    properties = contact_sensor_capability["properties"]
+    assert properties["retrievable"] is True
+    assert {"name": "detectionState"} in properties["supported"]
 
 
 async def test_scene(hass):
@@ -3967,13 +3998,32 @@ async def test_button(hass, domain):
     assert appliance["friendlyName"] == "Ring Doorbell"
 
     capabilities = assert_endpoint_capabilities(
-        appliance, "Alexa.SceneController", "Alexa"
+        appliance,
+        "Alexa.SceneController",
+        "Alexa.EventDetectionSensor",
+        "Alexa.EndpointHealth",
+        "Alexa",
     )
     scene_capability = get_capability(capabilities, "Alexa.SceneController")
     assert scene_capability["supportsDeactivation"] is False
 
     await assert_scene_controller_works(
         f"{domain}#ring_doorbell", f"{domain}.press", False, hass
+    )
+
+    event_detection_capability = get_capability(
+        capabilities, "Alexa.EventDetectionSensor"
+    )
+    assert event_detection_capability is not None
+    properties = event_detection_capability["properties"]
+    assert properties["proactivelyReported"] is True
+    assert not properties["retrievable"]
+    assert {"name": "humanPresenceDetectionState"} in properties["supported"]
+    assert (
+        event_detection_capability["configuration"]["detectionModes"]["humanPresence"][
+            "supportsNotDetected"
+        ]
+        is False
     )
 
 
