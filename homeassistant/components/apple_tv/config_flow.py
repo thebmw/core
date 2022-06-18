@@ -19,6 +19,7 @@ from homeassistant.const import CONF_ADDRESS, CONF_NAME, CONF_PIN
 from homeassistant.core import callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.util.network import is_ipv6_address
 
 from .const import CONF_CREDENTIALS, CONF_IDENTIFIERS, CONF_START_OFF, DOMAIN
 
@@ -70,7 +71,9 @@ class AppleTVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     @staticmethod
     @callback
-    def async_get_options_flow(config_entry):
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,
+    ) -> AppleTVOptionsFlow:
         """Get options flow for this handler."""
         return AppleTVOptionsFlow(config_entry)
 
@@ -166,6 +169,8 @@ class AppleTVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> data_entry_flow.FlowResult:
         """Handle device found via zeroconf."""
         host = discovery_info.host
+        if is_ipv6_address(host):
+            return self.async_abort(reason="ipv6_not_supported")
         self._async_abort_entries_match({CONF_ADDRESS: host})
         service_type = discovery_info.type[:-1]  # Remove leading .
         name = discovery_info.name.replace(f".{service_type}.", "")
@@ -520,7 +525,7 @@ class AppleTVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 class AppleTVOptionsFlow(config_entries.OptionsFlow):
     """Handle Apple TV options."""
 
-    def __init__(self, config_entry):
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         """Initialize Apple TV options flow."""
         self.config_entry = config_entry
         self.options = dict(config_entry.options)

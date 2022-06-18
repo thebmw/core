@@ -1,5 +1,6 @@
 """Locks on Zigbee Home Automation networks."""
 import functools
+from typing import Any
 
 import voluptuous as vol
 from zigpy.zcl.foundation import Status
@@ -119,18 +120,18 @@ class ZhaDoorLock(ZhaEntity, LockEntity):
         """Return state attributes."""
         return self.state_attributes
 
-    async def async_lock(self, **kwargs):
+    async def async_lock(self, **kwargs: Any) -> None:
         """Lock the lock."""
         result = await self._doorlock_channel.lock_door()
-        if not isinstance(result, list) or result[0] is not Status.SUCCESS:
+        if isinstance(result, Exception) or result[0] is not Status.SUCCESS:
             self.error("Error with lock_door: %s", result)
             return
         self.async_write_ha_state()
 
-    async def async_unlock(self, **kwargs):
+    async def async_unlock(self, **kwargs: Any) -> None:
         """Unlock the lock."""
         result = await self._doorlock_channel.unlock_door()
-        if not isinstance(result, list) or result[0] is not Status.SUCCESS:
+        if isinstance(result, Exception) or result[0] is not Status.SUCCESS:
             self.error("Error with unlock_door: %s", result)
             return
         self.async_write_ha_state()

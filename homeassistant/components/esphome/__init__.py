@@ -31,6 +31,7 @@ from homeassistant import const
 from homeassistant.components import zeroconf
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
+    ATTR_DEVICE_ID,
     CONF_HOST,
     CONF_MODE,
     CONF_PASSWORD,
@@ -192,7 +193,13 @@ async def async_setup_entry(  # noqa: C901
                 hass.async_create_task(tag.async_scan_tag(tag_id, device_id))
                 return
 
-            hass.bus.async_fire(service.service, service_data)
+            hass.bus.async_fire(
+                service.service,
+                {
+                    ATTR_DEVICE_ID: device_id,
+                    **service_data,
+                },
+            )
         else:
             hass.async_create_task(
                 hass.services.async_call(
@@ -513,6 +520,7 @@ async def _cleanup_instance(
     data = domain_data.pop_entry_data(entry)
     for disconnect_cb in data.disconnect_callbacks:
         disconnect_cb()
+    data.disconnect_callbacks = []
     for cleanup_callback in data.cleanup_callbacks:
         cleanup_callback()
     await data.client.disconnect()
@@ -560,6 +568,7 @@ async def platform_async_setup_entry(
     @callback
     def async_list_entities(infos: list[EntityInfo]) -> None:
         """Update entities of this platform when entities are listed."""
+        key_to_component = entry_data.key_to_component
         old_infos = entry_data.info[component_key]
         new_infos: dict[int, EntityInfo] = {}
         add_entities = []
@@ -578,10 +587,12 @@ async def platform_async_setup_entry(
                 entity = entity_type(entry_data, component_key, info.key)
                 add_entities.append(entity)
             new_infos[info.key] = info
+            key_to_component[info.key] = component_key
 
         # Remove old entities
         for info in old_infos.values():
             entry_data.async_remove_entity(hass, component_key, info.key)
+            key_to_component.pop(info.key, None)
 
         # First copy the now-old info into the backup object
         entry_data.old_info[component_key] = entry_data.info[component_key]
@@ -594,22 +605,6 @@ async def platform_async_setup_entry(
     signal = f"esphome_{entry.entry_id}_on_list"
     entry_data.cleanup_callbacks.append(
         async_dispatcher_connect(hass, signal, async_list_entities)
-    )
-
-    @callback
-    def async_entity_state(state: EntityState) -> None:
-        """Notify the appropriate entity of an updated state."""
-        if not isinstance(state, state_type):
-            return
-        # cast back to upper type, otherwise mypy gets confused
-        state = cast(EntityState, state)
-
-        entry_data.state[component_key][state.key] = state
-        entry_data.async_update_entity(hass, component_key, state.key)
-
-    signal = f"esphome_{entry.entry_id}_on_state"
-    entry_data.cleanup_callbacks.append(
-        async_dispatcher_connect(hass, signal, async_entity_state)
     )
 
 

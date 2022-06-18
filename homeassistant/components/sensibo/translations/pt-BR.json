@@ -14,13 +14,12 @@
         "step": {
             "reauth_confirm": {
                 "data": {
-                    "api_key": "Chave de API"
+                    "api_key": "Chave da API"
                 }
             },
             "user": {
                 "data": {
-                    "api_key": "Chave da API",
-                    "name": "Nome"
+                    "api_key": "Chave da API"
                 }
             }
         }

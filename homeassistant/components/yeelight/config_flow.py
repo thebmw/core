@@ -1,4 +1,6 @@
 """Config flow for Yeelight integration."""
+from __future__ import annotations
+
 import asyncio
 import logging
 from urllib.parse import urlparse
@@ -10,8 +12,8 @@ from yeelight.main import get_known_models
 
 from homeassistant import config_entries, exceptions
 from homeassistant.components import dhcp, ssdp, zeroconf
-from homeassistant.config_entries import ConfigEntryState
-from homeassistant.const import CONF_DEVICE, CONF_HOST, CONF_ID, CONF_NAME
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
+from homeassistant.const import CONF_DEVICE, CONF_HOST, CONF_ID, CONF_MODEL, CONF_NAME
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 import homeassistant.helpers.config_validation as cv
@@ -19,7 +21,6 @@ import homeassistant.helpers.config_validation as cv
 from .const import (
     CONF_DETECTED_MODEL,
     CONF_MODE_MUSIC,
-    CONF_MODEL,
     CONF_NIGHTLIGHT_SWITCH,
     CONF_NIGHTLIGHT_SWITCH_TYPE,
     CONF_SAVE_ON_CHANGE,
@@ -47,7 +48,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     @staticmethod
     @callback
-    def async_get_options_flow(config_entry):
+    def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlowHandler:
         """Return the options flow."""
         return OptionsFlowHandler(config_entry)
 
@@ -97,7 +98,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 self.hass.config_entries.async_update_entry(
                     entry, data={**entry.data, CONF_HOST: self._discovered_ip}
                 )
-                reload = True
+                reload = entry.state in (
+                    ConfigEntryState.SETUP_RETRY,
+                    ConfigEntryState.LOADED,
+                )
             if reload:
                 self.hass.async_create_task(
                     self.hass.config_entries.async_reload(entry.entry_id)
@@ -274,7 +278,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 class OptionsFlowHandler(config_entries.OptionsFlow):
     """Handle a option flow for Yeelight."""
 
-    def __init__(self, config_entry):
+    def __init__(self, config_entry: ConfigEntry) -> None:
         """Initialize the option flow."""
         self._config_entry = config_entry
 

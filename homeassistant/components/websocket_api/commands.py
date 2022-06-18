@@ -12,11 +12,10 @@ import voluptuous as vol
 from homeassistant.auth.permissions.const import CAT_ENTITIES, POLICY_READ
 from homeassistant.const import (
     EVENT_STATE_CHANGED,
-    EVENT_TIME_CHANGED,
     MATCH_ALL,
     SIGNAL_BOOTSTRAP_INTEGRATONS,
 )
-from homeassistant.core import Context, Event, HomeAssistant, callback
+from homeassistant.core import Context, Event, HomeAssistant, State, callback
 from homeassistant.exceptions import (
     HomeAssistantError,
     ServiceNotFound,
@@ -68,6 +67,7 @@ def async_register_commands(
     async_reg(hass, handle_test_condition)
     async_reg(hass, handle_unsubscribe_events)
     async_reg(hass, handle_validate_config)
+    async_reg(hass, handle_subscribe_entities)
 
 
 def pong_message(iden: int) -> dict[str, Any]:
@@ -105,20 +105,21 @@ def handle_subscribe_events(
             ):
                 return
 
-            connection.send_message(messages.cached_event_message(msg["id"], event))
+            connection.send_message(
+                lambda: messages.cached_event_message(msg["id"], event)
+            )
 
     else:
 
         @callback
         def forward_events(event: Event) -> None:
             """Forward events to websocket."""
-            if event.event_type == EVENT_TIME_CHANGED:
-                return
-
-            connection.send_message(messages.cached_event_message(msg["id"], event))
+            connection.send_message(
+                lambda: messages.cached_event_message(msg["id"], event)
+            )
 
     connection.subscriptions[msg["id"]] = hass.bus.async_listen(
-        event_type, forward_events
+        event_type, forward_events, run_immediately=True
     )
 
     connection.send_result(msg["id"])
@@ -214,20 +215,26 @@ async def handle_call_service(
 
 
 @callback
+def _async_get_allowed_states(
+    hass: HomeAssistant, connection: ActiveConnection
+) -> list[State]:
+    if connection.user.permissions.access_all_entities("read"):
+        return hass.states.async_all()
+    entity_perm = connection.user.permissions.check_entity
+    return [
+        state
+        for state in hass.states.async_all()
+        if entity_perm(state.entity_id, "read")
+    ]
+
+
+@callback
 @decorators.websocket_command({vol.Required("type"): "get_states"})
 def handle_get_states(
     hass: HomeAssistant, connection: ActiveConnection, msg: dict[str, Any]
 ) -> None:
     """Handle get states command."""
-    if connection.user.permissions.access_all_entities("read"):
-        states = hass.states.async_all()
-    else:
-        entity_perm = connection.user.permissions.check_entity
-        states = [
-            state
-            for state in hass.states.async_all()
-            if entity_perm(state.entity_id, "read")
-        ]
+    states = _async_get_allowed_states(hass, connection)
 
     # JSON serialize here so we can recover if it blows up due to the
     # state machine containing unserializable data. This command is required
@@ -260,6 +267,79 @@ def handle_get_states(
     connection.send_message(response2)
 
 
+@callback
+@decorators.websocket_command(
+    {
+        vol.Required("type"): "subscribe_entities",
+        vol.Optional("entity_ids"): cv.entity_ids,
+    }
+)
+def handle_subscribe_entities(
+    hass: HomeAssistant, connection: ActiveConnection, msg: dict[str, Any]
+) -> None:
+    """Handle subscribe entities command."""
+    entity_ids = set(msg.get("entity_ids", []))
+
+    @callback
+    def forward_entity_changes(event: Event) -> None:
+        """Forward entity state changed events to websocket."""
+        if not connection.user.permissions.check_entity(
+            event.data["entity_id"], POLICY_READ
+        ):
+            return
+        if entity_ids and event.data["entity_id"] not in entity_ids:
+            return
+
+        connection.send_message(
+            lambda: messages.cached_state_diff_message(msg["id"], event)
+        )
+
+    # We must never await between sending the states and listening for
+    # state changed events or we will introduce a race condition
+    # where some states are missed
+    states = _async_get_allowed_states(hass, connection)
+    connection.subscriptions[msg["id"]] = hass.bus.async_listen(
+        EVENT_STATE_CHANGED, forward_entity_changes, run_immediately=True
+    )
+    connection.send_result(msg["id"])
+    data: dict[str, dict[str, dict]] = {
+        messages.ENTITY_EVENT_ADD: {
+            state.entity_id: messages.compressed_state_dict_add(state)
+            for state in states
+            if not entity_ids or state.entity_id in entity_ids
+        }
+    }
+
+    # JSON serialize here so we can recover if it blows up due to the
+    # state machine containing unserializable data. This command is required
+    # to succeed for the UI to show.
+    response = messages.event_message(msg["id"], data)
+    try:
+        connection.send_message(const.JSON_DUMP(response))
+        return
+    except (ValueError, TypeError):
+        connection.logger.error(
+            "Unable to serialize to JSON. Bad data found at %s",
+            format_unserializable_data(
+                find_paths_unserializable_data(response, dump=const.JSON_DUMP)
+            ),
+        )
+    del response
+
+    add_entities = data[messages.ENTITY_EVENT_ADD]
+    cannot_serialize: list[str] = []
+    for entity_id, state_dict in add_entities.items():
+        try:
+            const.JSON_DUMP(state_dict)
+        except (ValueError, TypeError):
+            cannot_serialize.append(entity_id)
+
+    for entity_id in cannot_serialize:
+        del add_entities[entity_id]
+
+    connection.send_message(const.JSON_DUMP(messages.event_message(msg["id"], data)))
+
+
 @decorators.websocket_command({vol.Required("type"): "get_services"})
 @decorators.async_response
 async def handle_get_services(
@@ -279,15 +359,19 @@ def handle_get_config(
     connection.send_result(msg["id"], hass.config.as_dict())
 
 
-@decorators.websocket_command({vol.Required("type"): "manifest/list"})
+@decorators.websocket_command(
+    {vol.Required("type"): "manifest/list", vol.Optional("integrations"): [str]}
+)
 @decorators.async_response
 async def handle_manifest_list(
     hass: HomeAssistant, connection: ActiveConnection, msg: dict[str, Any]
 ) -> None:
     """Handle integrations command."""
-    loaded_integrations = async_get_loaded_integrations(hass)
+    wanted_integrations = msg.get("integrations")
+    if wanted_integrations is None:
+        wanted_integrations = async_get_loaded_integrations(hass)
     integrations = await asyncio.gather(
-        *(async_get_integration(hass, domain) for domain in loaded_integrations)
+        *(async_get_integration(hass, domain) for domain in wanted_integrations)
     )
     connection.send_result(
         msg["id"], [integration.manifest for integration in integrations]
